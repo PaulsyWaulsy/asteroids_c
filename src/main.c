@@ -7,6 +7,7 @@
 #include <SDL2/SDL_quit.h>
 #include <SDL2/SDL_render.h>
 #include <SDL2/SDL_scancode.h>
+#include <SDL2/SDL_shape.h>
 #include <SDL2/SDL_stdinc.h>
 #include <SDL2/SDL_system.h>
 #include <SDL2/SDL_timer.h>
@@ -20,7 +21,7 @@
 /*----------------------------------CONSTANTS---------------------------------*/
 // Screen dimensions
 const int SCREEN_WIDTH = 1000;
-const int SCREEN_HEIGHT = 1000;
+const int SCREEN_HEIGHT = 800;
 
 // Time constants
 const float MS_TO_SECONDS_F = 1000.0f;
@@ -43,14 +44,15 @@ const Vector2 INIT_FLAME_SHAPE[] = {
 
 const int FLICKER_RATE = 3;
 const float PLAYER_SPEED = 20.0f;
+const float PLAYER_SHOOT_FORCE = 30.0f;
 const float PLAYER_ROTATION_RATE = 0.05f;
 const float PLAYER_DRAG = 0.02f;
 const float VERTICLE = M_PI / 2;
 
 const Vector2 VECTOR2_ZERO = {0, 0};
 
-const float MIN_ASTEROID_SPEED = 20.0f;
-const float MAX_ASTEROID_SPEED = 80.0f;
+const float MIN_PARTICLE_SPEED = 20.0f;
+const float MAX_PARTICLE_SPEED = 80.0f;
 const float MIN_RADIUS = 2.0f;
 const float MAX_RADIUS = 4.0f;
 
@@ -60,8 +62,14 @@ const int INIT_NUM_ASTEROIDS = 20;
 const float PROJ_SPEED = 1000.0f;
 const Uint32 PROJ_TIME = 10000;
 const int PROJ_THICKNESS = 2;
+const int BROKEN_ASTEROID_NUM = 3;
 
-const Uint32 FIRE_RATE = 200;
+const Uint32 RESPAWN_TIME = 2000;
+const Uint32 FIRE_RATE = 80;
+
+const int NUM_PARTICLES = 30;
+const int NUM_LINES = 4;
+const float LINE_RADIUS = 20.0f;
 
 /*------------------------------------ENUMS-----------------------------------*/
 typedef enum {
@@ -77,8 +85,8 @@ typedef enum {
 } AsteroidSize;
 
 const AsteroidSize ASTEROID_SIZES[] = {SMALL, MEDIUM, LARGE};
-const AsteroidSize MIN_ASTEROID_SPEEDS[] = {90.0f, 40.0f, 20.0f};
-const AsteroidSize MAX_ASTEROID_SPEEDS[] = {140.0f, 80.0f, 30.0f};
+const AsteroidSize MIN_ASTEROID_SPEEDS[] = {100.0f, 40.0f, 20.0f};
+const AsteroidSize MAX_ASTEROID_SPEEDS[] = {200.0f, 80.0f, 30.0f};
 
 /*-----------------------------------STRUCTS----------------------------------*/
 typedef struct {
@@ -103,10 +111,12 @@ typedef struct {
 typedef struct {
     int moving;
     int shoot;
+    int crashed;
     Vector2 position;
     Vector2 velocity;
     float rotation;
     Uint32 lastShot;
+    Uint32 crashTime;
 } Player;
 
 typedef struct {
@@ -123,6 +133,18 @@ typedef struct {
 } Projectile;
 
 typedef struct {
+    float angle;
+    Uint32 spawnTime;
+    Vector2 position;
+    Vector2 velocity;
+} Line;
+
+typedef struct {
+    Line** lines;
+    Projectile** particles;
+} CrashInfo;
+
+typedef struct {
     int asteroidCapacity;
     int asteroidSize;
     int projectileCapacity;
@@ -130,6 +152,7 @@ typedef struct {
     Player* player;
     Asteroid** asteroids;
     Projectile** projectiles;
+    CrashInfo* crashInfo;
 } State;
 
 /*----------------------------------PROTOTYPES--------------------------------*/
@@ -143,11 +166,11 @@ void render(Window* window, State* state, Uint32 time);
 void handle_events(Window* window, SDL_Event* event, Player* player);
 Player* init_ship(const float x, const float y);
 State* init_state(void);
-void free_ship(Player* player);
+void free_player(Player* player);
 void free_state(State* state);
 void update_player(Player* player, float deltaTime);
 void draw_player(SDL_Renderer* renderer, Player* player, Uint32 time);
-Asteroid* init_asteroid(AsteroidSize size, Uint32 seed);
+Asteroid* init_asteroid(AsteroidSize size, Vector2 position, Uint32 seed);
 void draw_asteroid(SDL_Renderer* renderer, Asteroid* asteroid);
 void add_asteroid(State* state, Asteroid* asteroid);
 void update_asteroids(Asteroid** asteroids, int size, float deltaTime);
@@ -159,9 +182,19 @@ void add_projectile(State* state, Uint32 time);
 void update_projectile(Projectile* proj, float deltaTime);
 void update_projectiles(Projectile** projectiles, int size, float deltaTime);
 void draw_projectile(SDL_Renderer* renderer, Projectile* proj);
-void draw_projectiles(SDL_Renderer* renderer, Projectile** projectiles, int size);
+void draw_projectiles(SDL_Renderer* renderer, Projectile** projectiles,
+                      int size);
 void delete_projectiles(State* state, Uint32 time);
 void update_shoot(State* state, Uint32 time);
+void detect_crash(State* state, Uint32 time);
+void detect_Shoot(State* state);
+void on_destroy(State* state, AsteroidSize size, Vector2 position, Uint32 seed);
+void on_crash(CrashInfo* crashInfo, Vector2 position, Uint32 time);
+void respawn(Player* player);
+CrashInfo* init_crashinfo(void);
+void draw_crashinfo(SDL_Renderer* renderer, CrashInfo* crashInfo);
+void update_crashinfo(CrashInfo* crashInfo, float deltaTime);
+void free_crashinfo(CrashInfo* crashInfo);
 
 int main() {
     Time* gameTime = init_time();
@@ -276,15 +309,35 @@ void update(Window* window, State* state, Time* time) {
     update_asteroids(state->asteroids, state->asteroidSize, deltaTime);
     update_projectiles(state->projectiles, state->projectileSize, deltaTime);
     delete_projectiles(state, time->time);
+    detect_Shoot(state);
+
+    if (!state->player->crashed) {
+        detect_crash(state, time->time);
+    }
+
+    if (state->player->crashed) {
+        update_crashinfo(state->crashInfo, deltaTime);
+        if ((time->time - state->player->crashTime) >= RESPAWN_TIME) {
+            respawn(state->player);
+        }
+    }
 }
 
 void render(Window* window, State* state, Uint32 time) {
     SDL_SetRenderDrawColor(window->renderer, 0x00, 0x00, 0x00, 0xFF);
     SDL_RenderClear(window->renderer);
 
-    draw_player(window->renderer, state->player, time);
-    draw_projectiles(window->renderer, state->projectiles, state->projectileSize);
     draw_asteroids(window->renderer, state->asteroids, state->asteroidSize);
+    draw_projectiles(window->renderer, state->projectiles,
+                     state->projectileSize);
+
+    if (!state->player->crashed) {
+        draw_player(window->renderer, state->player, time);
+    }
+
+    if (state->player->crashed) {
+        draw_crashinfo(window->renderer, state->crashInfo);
+    }
     SDL_RenderPresent(window->renderer);
 }
 
@@ -309,31 +362,32 @@ void handle_events(Window* window, SDL_Event* event, Player* player) {
         }
     }
 
-    const Uint8* state = SDL_GetKeyboardState(NULL);
+    if (!player->crashed) {
+        const Uint8* state = SDL_GetKeyboardState(NULL);
+        // Forward movement/thrusters
+        if (state[SDL_SCANCODE_UP]) {
+            float dX = cos(player->rotation) * -PLAYER_SPEED;
+            float dY = sin(player->rotation) * -PLAYER_SPEED;
+            Vector2 movement = create_vector(dX, dY);
+            player->moving = 1;
+            player->velocity = vector_sum(player->velocity, movement);
+        } else {
+            player->moving = 0; // Set the moving flag back to 0
+        }
 
-    // Forward movement/thrusters
-    if (state[SDL_SCANCODE_UP]) {
-        float dX = cos(player->rotation) * -PLAYER_SPEED;
-        float dY = sin(player->rotation) * -PLAYER_SPEED;
-        Vector2 movement = create_vector(dX, dY);
-        player->moving = 1;
-        player->velocity = vector_sum(player->velocity, movement);
-    } else {
-        player->moving = 0; // Set the moving flag back to 0
-    }
+        // Rotation left
+        if (state[SDL_SCANCODE_LEFT]) {
+            player->rotation -= PLAYER_ROTATION_RATE;
+        }
 
-    // Rotation left
-    if (state[SDL_SCANCODE_LEFT]) {
-        player->rotation -= PLAYER_ROTATION_RATE;
-    }
+        // Rotation right
+        if (state[SDL_SCANCODE_RIGHT]) {
+            player->rotation += PLAYER_ROTATION_RATE;
+        }
 
-    // Rotation right
-    if (state[SDL_SCANCODE_RIGHT]) {
-        player->rotation += PLAYER_ROTATION_RATE;
-    }
-
-    if (state[SDL_SCANCODE_SPACE]) {
-        player->shoot = 1;
+        if (state[SDL_SCANCODE_SPACE]) {
+            player->shoot = 1;
+        }
     }
 }
 
@@ -341,6 +395,7 @@ Player* init_ship(const float x, const float y) {
     Player* player = (Player*)malloc(sizeof(Player));
     player->moving = 0;
     player->shoot = 0;
+    player->crashed = 0;
     player->position = (Vector2){x, y};
     player->velocity = (Vector2){0, 0};
     player->rotation = VERTICLE;
@@ -355,6 +410,7 @@ State* init_state(void) {
     state->asteroidCapacity = INIT_CAPACITY;
     state->asteroids = (Asteroid**)malloc(sizeof(Asteroid*) * INIT_CAPACITY);
 
+    state->crashInfo = init_crashinfo();
     state->projectileSize = 0;
     state->projectileCapacity = INIT_CAPACITY;
     state->projectiles =
@@ -362,20 +418,38 @@ State* init_state(void) {
     return state;
 }
 
-void free_ship(Player* ship) {
-    if (!ship) {
-        return;
-    }
-    free(ship);
+void free_player(Player* player) {
+    free(player);
 }
 
 void free_state(State* state) {
-    if (!state) {
-        return;
+    free_player(state->player);
+    free_crashinfo(state->crashInfo);
+    for (int i = 0; i < state->asteroidSize; i++) {
+        free(state->asteroids[i]);
+    }
+    free(state->asteroids);
+
+    for (int i = 0; i < state->projectileSize; i++) {
+        free(state->projectiles[i]);
+    }
+    free(state->projectiles);
+    free(state);
+}
+
+void free_crashinfo(CrashInfo* crashInfo) {
+    for (int i = 0; i < NUM_PARTICLES; i++) {
+        free(crashInfo->particles[i]);
     }
 
-    free_ship(state->player);
+    for (int i = 0; i < NUM_LINES; i++) {
+        free(crashInfo->lines[i]);
+    }
+    free(crashInfo->particles);
+    free(crashInfo->lines);
+    free(crashInfo);
 }
+
 
 void update_player(Player* player, float deltaTime) {
     // Ensure there is a constant frictional/drag on the ship
@@ -432,14 +506,11 @@ void add_asteroid(State* state, Asteroid* asteroid) {
     state->asteroids[state->asteroidSize++] = asteroid;
 }
 
-Asteroid* init_asteroid(AsteroidSize size, Uint32 seed) {
+Asteroid* init_asteroid(AsteroidSize size, Vector2 position, Uint32 seed) {
     Asteroid* asteroid = (Asteroid*)malloc(sizeof(Asteroid));
     asteroid->size = size;
     asteroid->seed = seed;
-
-    srand(seed);
-    float x = rand_float(0, SCREEN_WIDTH);
-    float y = rand_float(0, SCREEN_HEIGHT);
+    asteroid->position = position;
 
     int idx = asteroid_size_idx(size);
     float speed =
@@ -447,7 +518,6 @@ Asteroid* init_asteroid(AsteroidSize size, Uint32 seed) {
     float angle = rand_float(0, (2.0f * M_PI)); // Any angle within circle
     float dX = cos(angle) * speed;
     float dY = sin(angle) * speed;
-    asteroid->position = create_vector(x, y);
     asteroid->velocity = create_vector(dX, dY);
     return asteroid;
 }
@@ -488,7 +558,12 @@ void spawn_asteroids(State* state, int num, Uint32 seed) {
     for (int i = 0; i < num; i++) {
         seed = rand();
         AsteroidSize size = ASTEROID_SIZES[seed % 3];
-        Asteroid* asteroid = init_asteroid(size, rand());
+
+        srand(seed);
+        float x = rand_float(0, SCREEN_WIDTH);
+        float y = rand_float(0, SCREEN_HEIGHT);
+        Vector2 position = create_vector(x, y);
+        Asteroid* asteroid = init_asteroid(size, position, rand());
         add_asteroid(state, asteroid);
     }
 }
@@ -549,10 +624,12 @@ void update_projectiles(Projectile** projectiles, int size, float deltaTime) {
 void shoot(State* state, Uint32 time) { add_projectile(state, time); }
 
 void draw_projectile(SDL_Renderer* renderer, Projectile* proj) {
-    draw_thick_point(renderer, proj->position.x, proj->position.y, PROJ_THICKNESS);
+    draw_thick_point(renderer, proj->position.x, proj->position.y,
+                     PROJ_THICKNESS);
 }
 
-void draw_projectiles(SDL_Renderer* renderer, Projectile** projectiles, int size) {
+void draw_projectiles(SDL_Renderer* renderer, Projectile** projectiles,
+                      int size) {
     for (int i = 0; i < size; i++) {
         draw_projectile(renderer, projectiles[i]);
     }
@@ -574,14 +651,174 @@ void delete_projectiles(State* state, Uint32 time) {
 }
 
 void update_shoot(State* state, Uint32 time) {
-    if (state->player->shoot &&
-        (time - state->player->lastShot) > FIRE_RATE) {
-        add_projectile(state, time);
+    if (state->player->shoot && (time - state->player->lastShot) > FIRE_RATE) {
         state->player->lastShot = time;
+        add_projectile(state, time);
+
+        float dX = cos(state->player->rotation) * PLAYER_SHOOT_FORCE;
+        float dY = sin(state->player->rotation) * PLAYER_SHOOT_FORCE;
+        Vector2 delta = create_vector(dX, dY);
+        state->player->velocity = vector_sum(state->player->velocity, delta);
+
     } else {
         state->player->shoot = 0;
     }
 }
 
-void detect_crash(Player* player, Asteroid** asteroids, int size) {
+// Check if a specific point is inside radius of asteroids
+// distance^2=(x−cx)^2+(y−cy)^2
+void detect_crash(State* state, Uint32 time) {
+    Vector2 position = state->player->position;
+    for (int i = 0; i < state->asteroidSize; i++) {
+        Asteroid* asteroid = state->asteroids[i];
+        float radius = asteroid->size * MAX_RADIUS;
+        float dX = position.x - asteroid->position.x;
+        float dY = position.y - asteroid->position.y;
+        if ((dX * dX + dY * dY) <= (radius * radius)) {
+            state->player->crashed = 1;
+            state->player->crashTime = time;
+            on_crash(state->crashInfo, state->player->position, time);
+        }
+    }
+}
+
+void respawn(Player* player) {
+    player->position = create_vector(SCREEN_WIDTH / 2.0f, SCREEN_HEIGHT / 2.0f);
+    player->crashed = 0;
+}
+
+void detect_Shoot(State* state) {
+    for (int i = 0; i < state->projectileSize; i++) {
+        Vector2 position = state->projectiles[i]->position;
+        for (int j = 0; j < state->asteroidSize; j++) {
+            Asteroid* asteroid = state->asteroids[j];
+            float radius = asteroid->size * MAX_RADIUS;
+            float dX = position.x - asteroid->position.x;
+            float dY = position.y - asteroid->position.y;
+            if ((dX * dX + dY * dY) <= (radius * radius)) {
+                AsteroidSize size = asteroid->size;
+                Vector2 position = asteroid->position;
+                Uint32 seed = asteroid->seed;
+                free(asteroid);
+                for (int k = j; k < state->asteroidSize - 1; k++) {
+                    state->asteroids[k] = state->asteroids[k + 1];
+                }
+                state->asteroidSize--; // Reduce the count
+                j--;
+
+                on_destroy(state, size, position, seed);
+
+                free(state->projectiles[i]);
+                for (int l = i; l < state->projectileSize - 1; l++) {
+                    state->projectiles[l] = state->projectiles[l + 1];
+                }
+                state->projectileSize--; // Reduce the count
+                i--;
+                break;
+            }
+        }
+    }
+}
+
+void on_destroy(State* state, AsteroidSize size, Vector2 position,
+                Uint32 seed) {
+    if (size == MEDIUM) {
+        for (int i = 0; i < BROKEN_ASTEROID_NUM; i++) {
+            seed = rand();
+            AsteroidSize brokenSize = SMALL;
+            srand(seed);
+            Asteroid* asteroid = init_asteroid(brokenSize, position, seed);
+            add_asteroid(state, asteroid);
+        }
+    } else if (size == LARGE) {
+        for (int i = 0; i < BROKEN_ASTEROID_NUM; i++) {
+            seed = rand();
+            AsteroidSize brokenSize = MEDIUM;
+            srand(seed);
+            Asteroid* asteroid = init_asteroid(brokenSize, position, seed);
+            add_asteroid(state, asteroid);
+        }
+    }
+}
+
+void on_crash(CrashInfo* crashInfo, Vector2 position, Uint32 time) {
+    srand(time);
+    for (int i = 0; i < NUM_PARTICLES; i++) {
+        rand();
+        float speed = rand_float(MIN_PARTICLE_SPEED, MAX_PARTICLE_SPEED);
+        float angle = rand_float(0, (2.0f * M_PI)); // Any angle within circle
+        float dX = cos(angle) * speed;
+        float dY = sin(angle) * speed;
+        Vector2 velocity = create_vector(dX, dY);
+        crashInfo->particles[i]->position = position;
+        crashInfo->particles[i]->velocity = velocity;
+        crashInfo->particles[i]->spawnTime = time;
+    }
+
+    for (int i = 0; i < NUM_LINES; i++) {
+        rand();
+        float speed = rand_float(MIN_PARTICLE_SPEED, MAX_PARTICLE_SPEED);
+        float angle = rand_float(0, (2.0f * M_PI)); // Any angle within circle
+        float dir = rand_float(0, (2.0f * M_PI));   // Any angle within circle
+        float dX = cos(dir) * speed;
+        float dY = sin(dir) * speed;
+        Vector2 velocity = create_vector(dX, dY);
+        crashInfo->lines[i]->velocity = velocity;
+        crashInfo->lines[i]->position = position;
+        crashInfo->lines[i]->angle = angle;
+    }
+}
+
+void update_crashinfo(CrashInfo* crashInfo, float deltaTime) {
+    for (int i = 0; i < NUM_PARTICLES; i++) {
+        Vector2 delta =
+            vector_mul(crashInfo->particles[i]->velocity, deltaTime);
+        Vector2 position = crashInfo->particles[i]->position;
+        crashInfo->particles[i]->position = vector_sum(position, delta);
+    }
+
+    for (int i = 0; i < NUM_LINES; i++) {
+        Vector2 delta = vector_mul(crashInfo->lines[i]->velocity, deltaTime);
+        Vector2 position = crashInfo->lines[i]->position;
+        crashInfo->lines[i]->position = vector_sum(position, delta);
+    }
+}
+
+void draw_crashinfo(SDL_Renderer* renderer, CrashInfo* crashInfo) {
+    for (int i = 0; i < NUM_PARTICLES; i++) {
+        draw_projectile(renderer, crashInfo->particles[i]);
+    }
+
+    for (int i = 0; i < NUM_LINES; i++) {
+        float angle = crashInfo->lines[i]->angle;
+        Vector2 position = crashInfo->lines[i]->position;
+
+        float x = position.x + cos(angle) * LINE_RADIUS;
+        float y = position.y + sin(angle) * LINE_RADIUS;
+        Vector2 end = create_vector(x, y);
+        draw_line(renderer, position, end);
+    }
+}
+
+CrashInfo* init_crashinfo(void) {
+    CrashInfo* crashInfo = (CrashInfo*)malloc(sizeof(CrashInfo));
+    crashInfo->particles =
+        (Projectile**)malloc(sizeof(Projectile*) * NUM_PARTICLES);
+    crashInfo->lines = (Line**)malloc(sizeof(Line*) * NUM_LINES);
+
+    for (int i = 0; i < NUM_PARTICLES; i++) {
+        crashInfo->particles[i] = (Projectile*)malloc(sizeof(Projectile));
+        crashInfo->particles[i]->spawnTime = 0;
+        crashInfo->particles[i]->position = create_vector(0, 0);
+        crashInfo->particles[i]->velocity = create_vector(0, 0);
+    }
+
+    for (int i = 0; i < NUM_LINES; i++) {
+        crashInfo->lines[i] = (Line*)malloc(sizeof(Line));
+        crashInfo->lines[i]->spawnTime = 0;
+        crashInfo->lines[i]->angle = 0;
+        crashInfo->lines[i]->position = create_vector(0, 0);
+        crashInfo->lines[i]->velocity = create_vector(0, 0);
+    }
+    return crashInfo;
 }
