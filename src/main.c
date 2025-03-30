@@ -27,7 +27,7 @@ const int SCREEN_HEIGHT = 800;
 // Time constants
 const float MS_TO_SECONDS_F = 1000.0f;
 const Uint32 MS_TO_SECONDS = 1000;
-const int MAX_FPS = 120;
+const int MAX_FPS = 240;
 const Uint32 TICK_PER_FRAME = MS_TO_SECONDS / MAX_FPS;
 
 // Ship constant
@@ -71,10 +71,10 @@ const Vector2 DIGIT_POINTS[][7] = {
 const int DIGIT_COUNTS[] = {5, 2, 6, 7, 5, 6, 5, 3, 7, 5};
 
 const int FLICKER_RATE = 3;
-const float PLAYER_SPEED = 20.0f;
+const float PLAYER_SPEED = 2500.0f;
 const float PLAYER_SHOOT_FORCE = 30.0f;
-const float PLAYER_ROTATION_RATE = 0.05f;
-const float PLAYER_DRAG = 0.02f;
+const float PLAYER_ROTATION_RATE = 7.5f;
+const float PLAYER_DRAG = 3.00f;
 const float VERTICLE = M_PI / 2;
 
 const Vector2 VECTOR2_ZERO = {0, 0};
@@ -93,7 +93,7 @@ const int PROJ_THICKNESS = 2;
 const int BROKEN_ASTEROID_NUM = 2;
 
 const Uint32 RESPAWN_TIME = 2000;
-const Uint32 FIRE_RATE = 100;
+const Uint32 FIRE_RATE = 150;
 
 const int NUM_PARTICLES = 30;
 const int NUM_LINES = 4;
@@ -212,7 +212,7 @@ Window* init_window(const int width, const int height, const char* title);
 void close_window(Window* window);
 void update(Window* window, State* state, Time* gameTime);
 void render(Window* window, State* state, Uint32 time);
-void handle_events(Window* window, SDL_Event* event, Player* player);
+void handle_events(Window* window, SDL_Event* event, Player* player, float deltaTime);
 Player* init_ship(const float x, const float y);
 State* init_state(void);
 void free_player(Player* player);
@@ -234,7 +234,7 @@ void draw_projectile(SDL_Renderer* renderer, Projectile* proj);
 void draw_projectiles(SDL_Renderer* renderer, Projectile** projectiles,
                       int size);
 void delete_projectiles(State* state, Uint32 time);
-void update_shoot(State* state, Uint32 time);
+void update_shoot(State* state, Time* time);
 void detect_crash(State* state, Uint32 time);
 void detect_Shoot(State* state);
 void on_destroy(State* state, AsteroidSize size, Vector2 position, Uint32 seed);
@@ -358,14 +358,15 @@ void close_window(Window* window) {
 
 void update(Window* window, State* state, Time* gameTime) {
     SDL_Event event;
-    handle_events(window, &event, state->player);
 
     // Update logic goes here
     float deltaTime = gameTime->deltaTime;
+    handle_events(window, &event, state->player, deltaTime);
     update_player(state->player, deltaTime);
-    update_shoot(state, gameTime->time);
+    update_shoot(state, gameTime);
     update_asteroids(state->asteroids, state->asteroidSize, deltaTime);
     update_projectiles(state->projectiles, state->projectileSize, deltaTime);
+
     delete_projectiles(state, gameTime->time);
     detect_Shoot(state);
 
@@ -403,7 +404,7 @@ void render(Window* window, State* state, Uint32 time) {
     SDL_RenderPresent(window->renderer);
 }
 
-void handle_events(Window* window, SDL_Event* event, Player* player) {
+void handle_events(Window* window, SDL_Event* event, Player* player, float deltaTime) {
     while (SDL_PollEvent(event)) {
         switch (event->type) {
         case SDL_QUIT:
@@ -428,8 +429,8 @@ void handle_events(Window* window, SDL_Event* event, Player* player) {
         const Uint8* state = SDL_GetKeyboardState(NULL);
         // Forward movement/thrusters
         if (state[SDL_SCANCODE_UP]) {
-            float dX = cos(player->rotation) * -PLAYER_SPEED;
-            float dY = sin(player->rotation) * -PLAYER_SPEED;
+            float dX = cos(player->rotation) * -PLAYER_SPEED * deltaTime;
+            float dY = sin(player->rotation) * -PLAYER_SPEED * deltaTime;
             Vector2 movement = create_vector(dX, dY);
             player->moving = 1;
             player->velocity = vector_sum(player->velocity, movement);
@@ -439,12 +440,12 @@ void handle_events(Window* window, SDL_Event* event, Player* player) {
 
         // Rotation left
         if (state[SDL_SCANCODE_LEFT]) {
-            player->rotation -= PLAYER_ROTATION_RATE;
+            player->rotation -= PLAYER_ROTATION_RATE * deltaTime;
         }
 
         // Rotation right
         if (state[SDL_SCANCODE_RIGHT]) {
-            player->rotation += PLAYER_ROTATION_RATE;
+            player->rotation += PLAYER_ROTATION_RATE * deltaTime;
         }
 
         if (state[SDL_SCANCODE_SPACE]) {
@@ -513,7 +514,7 @@ void free_crashinfo(CrashInfo* crashInfo) {
 
 void update_player(Player* player, float deltaTime) {
     // Ensure there is a constant frictional/drag on the ship
-    player->velocity = vector_mul(player->velocity, (1.0f - PLAYER_DRAG));
+    player->velocity = vector_mul(player->velocity, (1.0f - PLAYER_DRAG * deltaTime));
 
     float newX = player->position.x + player->velocity.x * deltaTime;
     float newY = player->position.y + player->velocity.y * deltaTime;
@@ -711,13 +712,13 @@ void delete_projectiles(State* state, Uint32 time) {
     }
 }
 
-void update_shoot(State* state, Uint32 time) {
-    if (state->player->shoot && (time - state->player->lastShot) > FIRE_RATE) {
-        state->player->lastShot = time;
-        add_projectile(state, time);
+void update_shoot(State* state, Time* time) {
+    if (state->player->shoot && (time->time - state->player->lastShot) > FIRE_RATE) {
+        state->player->lastShot = time->time;
+        add_projectile(state, time->time);
 
-        float dX = cos(state->player->rotation) * PLAYER_SHOOT_FORCE;
-        float dY = sin(state->player->rotation) * PLAYER_SHOOT_FORCE;
+        float dX = cos(state->player->rotation) * PLAYER_SHOOT_FORCE * time->deltaTime;
+        float dY = sin(state->player->rotation) * PLAYER_SHOOT_FORCE * time->deltaTime;
         Vector2 delta = create_vector(dX, dY);
         state->player->velocity = vector_sum(state->player->velocity, delta);
 
@@ -832,6 +833,7 @@ void on_crash(CrashInfo* crashInfo, Player* player, Uint32 time) {
         crashInfo->lines[i]->velocity = vector_sum(velocity, drift);
         crashInfo->lines[i]->angle = angle;
     }
+    player->velocity = create_vector(0, 0);
 }
 
 void update_crashinfo(CrashInfo* crashInfo, float deltaTime) {
