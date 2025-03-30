@@ -1,49 +1,39 @@
 #include "vec.h"
 #include <math.h>
 
-Vector2 create_vector(float x, float y) {
-    Vector2 vec = {
-        .x = x,
-        .y = y,
-    };
-    return vec;
+inline Vector2 create_vector(float x, float y) {
+    return (Vector2){x, y};
 }
 
-Vector2 vector_sum(const Vector2 a, const Vector2 b) {
-    return create_vector((a.x + b.x), (a.y + b.y));
+inline Vector2 vector_sum(const Vector2 a, const Vector2 b) {
+    return create_vector(a.x + b.x, a.y + b.y);
 }
 
-Vector2 vector_mul(const Vector2 vec, float factor) {
-    float x = vec.x * factor;
-    float y = vec.y * factor;
-    return create_vector(x, y);
+inline Vector2 vector_mul(const Vector2 vec, float factor) {
+    return create_vector(vec.x * factor, vec.y * factor);
 }
 
-
-Vector2 vector_rot(const Vector2 vec, float angle) {
+inline Vector2 vector_rot(const Vector2 vec, float angle) {
     float cosTheta = cos(angle);
     float sinTheta = sin(angle);
 
-    // Rotate the point
     float rotatedX = vec.x * cosTheta - vec.y * sinTheta;
     float rotatedY = vec.y * sinTheta + vec.y * cosTheta;
 
     return create_vector(rotatedX, rotatedY);
 }
 
-Vector2 vector_aro(const Vector2 vec, const Vector2 center, float angle) {
+inline Vector2 vector_aro(const Vector2 vec, const Vector2 center, float angle) {
     float cosTheta = cos(angle);
     float sinTheta = sin(angle);
 
-    // Translate the point to the origin (relative to the center)
     float translatedX = vec.x - center.x;
     float translatedY = vec.y - center.y;
 
-    // Rotate the point
     float rotatedX = translatedX * cosTheta - translatedY * sinTheta;
     float rotatedY = translatedX * sinTheta + translatedY * cosTheta;
 
-    return create_vector((rotatedX + center.x), (rotatedY + center.y));
+    return create_vector(rotatedX + center.x, rotatedY + center.y);
 }
 
 void draw_line(SDL_Renderer* renderer, Vector2 start, Vector2 end) {

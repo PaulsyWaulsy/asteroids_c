@@ -3,7 +3,9 @@
 #include <SDL2/SDL_events.h>
 #include <SDL2/SDL_keyboard.h>
 #include <SDL2/SDL_keycode.h>
+#include <SDL2/SDL_mixer.h>
 #include <SDL2/SDL_mouse.h>
+#include <SDL2/SDL_mutex.h>
 #include <SDL2/SDL_quit.h>
 #include <SDL2/SDL_render.h>
 #include <SDL2/SDL_scancode.h>
@@ -12,7 +14,6 @@
 #include <SDL2/SDL_system.h>
 #include <SDL2/SDL_timer.h>
 #include <SDL2/SDL_video.h>
-#include <bits/types/timer_t.h>
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -42,6 +43,33 @@ const Vector2 INIT_FLAME_SHAPE[] = {
     {0, 26.25},
 };
 
+const Vector2 DIGIT_POINTS[][7] = {
+    {{-10, 15}, {10, 15}, {10, -15}, {-10, -15}, {-10, 15}},         // 0
+    {{10, 15}, {10, -15}},                                           // 1
+    {{-10, -15}, {10, -15}, {10, 0}, {-10, 0}, {-10, 15}, {10, 15}}, // 2
+    {{-10, -15},
+     {10, -15},
+     {10, 0},
+     {-10, 0},
+     {10, 0},
+     {10, 15},
+     {-10, 15}},                                                     // 3
+    {{-10, -15}, {-10, 0}, {10, 0}, {10, -15}, {10, 15}},            // 4
+    {{10, -15}, {-10, -15}, {-10, 0}, {10, 0}, {10, 15}, {-10, 15}}, // 5
+    {{-10, -15}, {-10, 15}, {10, 15}, {10, 0}, {-10, 0}},            // 6
+    {{-10, -15}, {10, -15}, {10, 15}},                               // 7
+    {{-10, 15},
+     {-10, -15},
+     {10, -15},
+     {10, 15},
+     {-10, 15},
+     {-10, 0},
+     {10, 0}},                                           // 8
+    {{10, 15}, {10, -15}, {-10, -15}, {-10, 0}, {10, 0}} // 9
+};
+
+const int DIGIT_COUNTS[] = {5, 2, 6, 7, 5, 6, 5, 3, 7, 5};
+
 const int FLICKER_RATE = 3;
 const float PLAYER_SPEED = 20.0f;
 const float PLAYER_SHOOT_FORCE = 30.0f;
@@ -62,14 +90,17 @@ const int INIT_NUM_ASTEROIDS = 20;
 const float PROJ_SPEED = 1000.0f;
 const Uint32 PROJ_TIME = 10000;
 const int PROJ_THICKNESS = 2;
-const int BROKEN_ASTEROID_NUM = 3;
+const int BROKEN_ASTEROID_NUM = 2;
 
 const Uint32 RESPAWN_TIME = 2000;
-const Uint32 FIRE_RATE = 80;
+const Uint32 FIRE_RATE = 100;
 
 const int NUM_PARTICLES = 30;
 const int NUM_LINES = 4;
 const float LINE_RADIUS = 20.0f;
+const float DIGIT_WIDTH = 35.0f;
+const float DIGIT_HEIGHT = 40.0f;
+const float DRIFT_FRACTION = 0.4f;
 
 /*------------------------------------ENUMS-----------------------------------*/
 typedef enum {
@@ -80,13 +111,29 @@ typedef enum {
 
 typedef enum {
     SMALL = 5,
-    MEDIUM = 10,
-    LARGE = 15,
+    MEDIUM = 9,
+    LARGE = 12,
 } AsteroidSize;
 
+typedef enum {
+    SMALL_POINTS = 8,
+    MEDIUM_POINTS = 10,
+    LARGE_POINTS = 13,
+} AsteroidPoints;
+
+typedef enum {
+    SMALL_SCORE = 100,
+    MEDIUM_SCORE = 50,
+    LARGE_SCORE = 20,
+} AsteroidScores;
+
+const AsteroidScores SCORES[] = {SMALL_SCORE, MEDIUM_SCORE, LARGE_SCORE};
+const AsteroidPoints ASTEROID_POINTS[] = {SMALL_POINTS, MEDIUM_POINTS,
+                                          LARGE_POINTS};
+
 const AsteroidSize ASTEROID_SIZES[] = {SMALL, MEDIUM, LARGE};
-const AsteroidSize MIN_ASTEROID_SPEEDS[] = {100.0f, 40.0f, 20.0f};
-const AsteroidSize MAX_ASTEROID_SPEEDS[] = {200.0f, 80.0f, 30.0f};
+const float MIN_ASTEROID_SPEEDS[] = {100.0f, 40.0f, 20.0f};
+const float MAX_ASTEROID_SPEEDS[] = {200.0f, 80.0f, 30.0f};
 
 /*-----------------------------------STRUCTS----------------------------------*/
 typedef struct {
@@ -144,7 +191,9 @@ typedef struct {
     Projectile** particles;
 } CrashInfo;
 
+
 typedef struct {
+    int score;
     int asteroidCapacity;
     int asteroidSize;
     int projectileCapacity;
@@ -161,7 +210,7 @@ void update_time(Time* time);
 void limit_fps(Time* time);
 Window* init_window(const int width, const int height, const char* title);
 void close_window(Window* window);
-void update(Window* window, State* state, Time* time);
+void update(Window* window, State* state, Time* gameTime);
 void render(Window* window, State* state, Uint32 time);
 void handle_events(Window* window, SDL_Event* event, Player* player);
 Player* init_ship(const float x, const float y);
@@ -189,12 +238,15 @@ void update_shoot(State* state, Uint32 time);
 void detect_crash(State* state, Uint32 time);
 void detect_Shoot(State* state);
 void on_destroy(State* state, AsteroidSize size, Vector2 position, Uint32 seed);
-void on_crash(CrashInfo* crashInfo, Vector2 position, Uint32 time);
+void on_crash(CrashInfo* crashInfo, Player* player, Uint32 time);
 void respawn(Player* player);
 CrashInfo* init_crashinfo(void);
 void draw_crashinfo(SDL_Renderer* renderer, CrashInfo* crashInfo);
 void update_crashinfo(CrashInfo* crashInfo, float deltaTime);
 void free_crashinfo(CrashInfo* crashInfo);
+void draw_score(SDL_Renderer* renderer, int score);
+void draw_digit(SDL_Renderer* renderer, Vector2 position, int num);
+void play_sound(Mix_Chunk* sound);
 
 int main() {
     Time* gameTime = init_time();
@@ -253,7 +305,7 @@ Window* init_window(const int width, const int height, const char* title) {
     window->width = width;
     window->title = strdup(title);
     window->quit = 0;
-    if (SDL_Init(SDL_INIT_VIDEO) < 0) {
+    if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_AUDIO) < 0) {
         fprintf(stderr, "SDL could not initialize!\n");
         free(window);
         exit(WINDOW_ERROR);
@@ -272,6 +324,12 @@ Window* init_window(const int width, const int height, const char* title) {
         SDL_CreateRenderer(window->window, -1, SDL_RENDERER_ACCELERATED);
     if (window->renderer == NULL) {
         SDL_DestroyWindow(window->window);
+        free(window);
+        exit(WINDOW_ERROR);
+    }
+
+    if (Mix_OpenAudio(44100, MIX_DEFAULT_FORMAT, 2, 2048) < 0) {
+        fprintf(stderr, "SDL_mixer could not be initialize!\n");
         free(window);
         exit(WINDOW_ERROR);
     }
@@ -298,26 +356,30 @@ void close_window(Window* window) {
     SDL_Quit();
 }
 
-void update(Window* window, State* state, Time* time) {
+void update(Window* window, State* state, Time* gameTime) {
     SDL_Event event;
     handle_events(window, &event, state->player);
 
     // Update logic goes here
-    float deltaTime = time->deltaTime;
+    float deltaTime = gameTime->deltaTime;
     update_player(state->player, deltaTime);
-    update_shoot(state, time->time);
+    update_shoot(state, gameTime->time);
     update_asteroids(state->asteroids, state->asteroidSize, deltaTime);
     update_projectiles(state->projectiles, state->projectileSize, deltaTime);
-    delete_projectiles(state, time->time);
+    delete_projectiles(state, gameTime->time);
     detect_Shoot(state);
 
+    if (state->asteroidSize <= 0) {
+        spawn_asteroids(state, INIT_NUM_ASTEROIDS, time(NULL));
+    }
+
     if (!state->player->crashed) {
-        detect_crash(state, time->time);
+        detect_crash(state, gameTime->time);
     }
 
     if (state->player->crashed) {
         update_crashinfo(state->crashInfo, deltaTime);
-        if ((time->time - state->player->crashTime) >= RESPAWN_TIME) {
+        if ((gameTime->time - state->player->crashTime) >= RESPAWN_TIME) {
             respawn(state->player);
         }
     }
@@ -326,10 +388,10 @@ void update(Window* window, State* state, Time* time) {
 void render(Window* window, State* state, Uint32 time) {
     SDL_SetRenderDrawColor(window->renderer, 0x00, 0x00, 0x00, 0xFF);
     SDL_RenderClear(window->renderer);
-
     draw_asteroids(window->renderer, state->asteroids, state->asteroidSize);
     draw_projectiles(window->renderer, state->projectiles,
                      state->projectileSize);
+    draw_score(window->renderer, state->score);
 
     if (!state->player->crashed) {
         draw_player(window->renderer, state->player, time);
@@ -405,6 +467,7 @@ Player* init_ship(const float x, const float y) {
 
 State* init_state(void) {
     State* state = (State*)malloc(sizeof(State));
+    state->score = 0;
     state->player = init_ship(SCREEN_WIDTH / 2.0, SCREEN_HEIGHT / 2.0);
     state->asteroidSize = 0;
     state->asteroidCapacity = INIT_CAPACITY;
@@ -418,9 +481,7 @@ State* init_state(void) {
     return state;
 }
 
-void free_player(Player* player) {
-    free(player);
-}
+void free_player(Player* player) { free(player); }
 
 void free_state(State* state) {
     free_player(state->player);
@@ -449,7 +510,6 @@ void free_crashinfo(CrashInfo* crashInfo) {
     free(crashInfo->lines);
     free(crashInfo);
 }
-
 
 void update_player(Player* player, float deltaTime) {
     // Ensure there is a constant frictional/drag on the ship
@@ -539,19 +599,20 @@ void draw_asteroids(SDL_Renderer* renderer, Asteroid** asteroids, int size) {
 void draw_asteroid(SDL_Renderer* renderer, Asteroid* asteroid) {
 
     srand(asteroid->seed); // Set the seed for the given asteroids
-    int size = asteroid->size;
-    Vector2 points[size];
+    int idx = asteroid_size_idx(asteroid->size);
+    int numPoints = ASTEROID_POINTS[idx];
+    Vector2 points[numPoints];
 
-    float angleStep = (2 * M_PI) / (float)size; // get the step of each
-    for (int i = 0; i < (int)size; i++) {
-        float radius = size * rand_float(MIN_RADIUS, MAX_RADIUS);
+    float angleStep = (2 * M_PI) / (float)numPoints; // get the step of each
+    for (int i = 0; i < (int)numPoints; i++) {
+        float radius = ASTEROID_SIZES[idx] * rand_float(MIN_RADIUS, MAX_RADIUS);
         float angle = angleStep * i;
         float x = cos(angle) * radius;
         float y = sin(angle) * radius;
         Vector2 vector = create_vector(x, y);
         points[i] = vector_sum(asteroid->position, vector);
     }
-    draw_shape(renderer, points, (int)size);
+    draw_shape(renderer, points, (int)numPoints);
 }
 
 void spawn_asteroids(State* state, int num, Uint32 seed) {
@@ -577,7 +638,7 @@ int asteroid_size_idx(AsteroidSize size) {
         return 1;
         break;
     case LARGE:
-        return 1;
+        return 2;
         break;
     default:
         break;
@@ -677,7 +738,7 @@ void detect_crash(State* state, Uint32 time) {
         if ((dX * dX + dY * dY) <= (radius * radius)) {
             state->player->crashed = 1;
             state->player->crashTime = time;
-            on_crash(state->crashInfo, state->player->position, time);
+            on_crash(state->crashInfo, state->player, time);
         }
     }
 }
@@ -722,6 +783,8 @@ void detect_Shoot(State* state) {
 
 void on_destroy(State* state, AsteroidSize size, Vector2 position,
                 Uint32 seed) {
+    int idx = asteroid_size_idx(size);
+    state->score += (int)SCORES[idx];
     if (size == MEDIUM) {
         for (int i = 0; i < BROKEN_ASTEROID_NUM; i++) {
             seed = rand();
@@ -741,7 +804,7 @@ void on_destroy(State* state, AsteroidSize size, Vector2 position,
     }
 }
 
-void on_crash(CrashInfo* crashInfo, Vector2 position, Uint32 time) {
+void on_crash(CrashInfo* crashInfo, Player* player, Uint32 time) {
     srand(time);
     for (int i = 0; i < NUM_PARTICLES; i++) {
         rand();
@@ -750,8 +813,9 @@ void on_crash(CrashInfo* crashInfo, Vector2 position, Uint32 time) {
         float dX = cos(angle) * speed;
         float dY = sin(angle) * speed;
         Vector2 velocity = create_vector(dX, dY);
-        crashInfo->particles[i]->position = position;
-        crashInfo->particles[i]->velocity = velocity;
+        Vector2 drift = vector_mul(player->velocity, DRIFT_FRACTION);
+        crashInfo->particles[i]->position = player->position;
+        crashInfo->particles[i]->velocity = vector_sum(velocity, drift);
         crashInfo->particles[i]->spawnTime = time;
     }
 
@@ -763,8 +827,9 @@ void on_crash(CrashInfo* crashInfo, Vector2 position, Uint32 time) {
         float dX = cos(dir) * speed;
         float dY = sin(dir) * speed;
         Vector2 velocity = create_vector(dX, dY);
-        crashInfo->lines[i]->velocity = velocity;
-        crashInfo->lines[i]->position = position;
+        Vector2 drift = vector_mul(player->velocity, DRIFT_FRACTION);
+        crashInfo->lines[i]->position = player->position;
+        crashInfo->lines[i]->velocity = vector_sum(velocity, drift);
         crashInfo->lines[i]->angle = angle;
     }
 }
@@ -821,4 +886,57 @@ CrashInfo* init_crashinfo(void) {
         crashInfo->lines[i]->velocity = create_vector(0, 0);
     }
     return crashInfo;
+}
+
+int* get_digits(int number, int* num_digits) {
+    // Special case for 0
+    if (number == 0) {
+        *num_digits = 1;
+        int* digits = (int*)malloc(sizeof(int));
+        digits[0] = 0;
+        return digits;
+    }
+
+    int temp = number;
+    *num_digits = 0;
+    while (temp != 0) {
+        (*num_digits)++;
+        temp /= 10;
+    }
+
+    int* digits = (int*)malloc(*num_digits * sizeof(int));
+    for (int i = *num_digits - 1; i >= 0; i--) {
+        digits[i] = number % 10;
+        number /= 10;
+    }
+
+    return digits;
+}
+
+void draw_digit(SDL_Renderer* renderer, Vector2 position, int num) {
+    for (int i = 1; i < DIGIT_COUNTS[num]; i++) {
+        Vector2 a = DIGIT_POINTS[num][i - 1];
+        Vector2 b = DIGIT_POINTS[num][i];
+        Vector2 newA = vector_sum(position, a);
+        Vector2 newB = vector_sum(position, b);
+        draw_line(renderer, newA, newB);
+    }
+}
+
+void draw_score(SDL_Renderer* renderer, int score) {
+    int numDigits;
+    int* digits = get_digits(score, &numDigits);
+
+    float x = SCREEN_WIDTH - DIGIT_WIDTH * numDigits;
+    float y = DIGIT_HEIGHT;
+    for (int i = 0; i < numDigits; i++) {
+        Vector2 position = create_vector(x + DIGIT_WIDTH * i, y);
+        draw_digit(renderer, position, digits[i]);
+    }
+}
+
+void play_sound(Mix_Chunk* sound) {
+    if (sound) {
+        Mix_PlayChannel(-1, sound, 0);
+    }
 }
