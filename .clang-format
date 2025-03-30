@@ -1,0 +1,11 @@
+# Indentation settings
+IndentWidth: 4          # Number of spaces for indentation
+TabWidth: 4             # Width of a tab character
+UseTab: Never           # Do not use tabs, only spaces
+
+# Pointer alignment settings
+PointerAlignment: Left  # Align pointers to the left (e.g., int* ptr)
+
+# Comment and line length settings
+ColumnLimit: 80         # Maximum line length before wrapping
+CommentPragmas: '^IWYU$'  # Allow specific comment pragmas (e.g., for header files)
