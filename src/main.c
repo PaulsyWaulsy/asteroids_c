@@ -20,6 +20,11 @@
 #include <time.h>
 
 /*----------------------------------CONSTANTS---------------------------------*/
+
+const char* const EXPLOSION_PATH = "../sounds/explosion.wav";
+const char* const SHOOT_PATH = "../sounds/shoot.wav";
+const char* const HIT_PATH = "../sounds/hit.wav";
+
 // Screen dimensions
 const int SCREEN_WIDTH = 1000;
 const int SCREEN_HEIGHT = 800;
@@ -71,9 +76,9 @@ const Vector2 DIGIT_POINTS[][7] = {
 const int DIGIT_COUNTS[] = {5, 2, 6, 7, 5, 6, 5, 3, 7, 5};
 
 const int FLICKER_RATE = 3;
-const float PLAYER_SPEED = 2500.0f;
+const float PLAYER_SPEED = 2000.0f;
 const float PLAYER_SHOOT_FORCE = 30.0f;
-const float PLAYER_ROTATION_RATE = 7.5f;
+const float PLAYER_ROTATION_RATE = 5.5f;
 const float PLAYER_DRAG = 3.00f;
 const float VERTICLE = M_PI / 2;
 
@@ -85,7 +90,7 @@ const float MIN_RADIUS = 2.0f;
 const float MAX_RADIUS = 4.0f;
 
 const int INIT_CAPACITY = 20;
-const int INIT_NUM_ASTEROIDS = 20;
+const int INIT_NUM_ASTEROIDS = 5;
 
 const float PROJ_SPEED = 1000.0f;
 const Uint32 PROJ_TIME = 10000;
@@ -191,6 +196,11 @@ typedef struct {
     Projectile** particles;
 } CrashInfo;
 
+typedef struct {
+    Mix_Chunk* explosion;
+    Mix_Chunk* shoot;
+    Mix_Chunk* hit;
+} SoundManager;
 
 typedef struct {
     int score;
@@ -202,6 +212,7 @@ typedef struct {
     Asteroid** asteroids;
     Projectile** projectiles;
     CrashInfo* crashInfo;
+    SoundManager* sounds;
 } State;
 
 /*----------------------------------PROTOTYPES--------------------------------*/
@@ -212,7 +223,8 @@ Window* init_window(const int width, const int height, const char* title);
 void close_window(Window* window);
 void update(Window* window, State* state, Time* gameTime);
 void render(Window* window, State* state, Uint32 time);
-void handle_events(Window* window, SDL_Event* event, Player* player, float deltaTime);
+void handle_events(Window* window, SDL_Event* event, Player* player,
+                   float deltaTime);
 Player* init_ship(const float x, const float y);
 State* init_state(void);
 void free_player(Player* player);
@@ -247,6 +259,9 @@ void free_crashinfo(CrashInfo* crashInfo);
 void draw_score(SDL_Renderer* renderer, int score);
 void draw_digit(SDL_Renderer* renderer, Vector2 position, int num);
 void play_sound(Mix_Chunk* sound);
+SoundManager* init_soundmanager(const char* explosion, const char* shoot, const char* hit);
+void free_soundmanager(SoundManager* sounds);
+void shoot(State* state, Uint32 time);
 
 int main() {
     Time* gameTime = init_time();
@@ -404,7 +419,8 @@ void render(Window* window, State* state, Uint32 time) {
     SDL_RenderPresent(window->renderer);
 }
 
-void handle_events(Window* window, SDL_Event* event, Player* player, float deltaTime) {
+void handle_events(Window* window, SDL_Event* event, Player* player,
+                   float deltaTime) {
     while (SDL_PollEvent(event)) {
         switch (event->type) {
         case SDL_QUIT:
@@ -479,6 +495,8 @@ State* init_state(void) {
     state->projectileCapacity = INIT_CAPACITY;
     state->projectiles =
         (Projectile**)malloc(sizeof(Projectile*) * INIT_CAPACITY);
+
+    state->sounds = init_soundmanager(EXPLOSION_PATH, SHOOT_PATH, HIT_PATH);
     return state;
 }
 
@@ -487,6 +505,7 @@ void free_player(Player* player) { free(player); }
 void free_state(State* state) {
     free_player(state->player);
     free_crashinfo(state->crashInfo);
+    free_soundmanager(state->sounds);
     for (int i = 0; i < state->asteroidSize; i++) {
         free(state->asteroids[i]);
     }
@@ -514,7 +533,8 @@ void free_crashinfo(CrashInfo* crashInfo) {
 
 void update_player(Player* player, float deltaTime) {
     // Ensure there is a constant frictional/drag on the ship
-    player->velocity = vector_mul(player->velocity, (1.0f - PLAYER_DRAG * deltaTime));
+    player->velocity =
+        vector_mul(player->velocity, (1.0f - PLAYER_DRAG * deltaTime));
 
     float newX = player->position.x + player->velocity.x * deltaTime;
     float newY = player->position.y + player->velocity.y * deltaTime;
@@ -619,7 +639,7 @@ void draw_asteroid(SDL_Renderer* renderer, Asteroid* asteroid) {
 void spawn_asteroids(State* state, int num, Uint32 seed) {
     for (int i = 0; i < num; i++) {
         seed = rand();
-        AsteroidSize size = ASTEROID_SIZES[seed % 3];
+        AsteroidSize size = LARGE;
 
         srand(seed);
         float x = rand_float(0, SCREEN_WIDTH);
@@ -683,7 +703,10 @@ void update_projectiles(Projectile** projectiles, int size, float deltaTime) {
     }
 }
 
-void shoot(State* state, Uint32 time) { add_projectile(state, time); }
+void shoot(State* state, Uint32 time) { 
+    add_projectile(state, time);
+    Mix_PlayChannel(-1, state->sounds->shoot, 0);
+}
 
 void draw_projectile(SDL_Renderer* renderer, Projectile* proj) {
     draw_thick_point(renderer, proj->position.x, proj->position.y,
@@ -713,12 +736,15 @@ void delete_projectiles(State* state, Uint32 time) {
 }
 
 void update_shoot(State* state, Time* time) {
-    if (state->player->shoot && (time->time - state->player->lastShot) > FIRE_RATE) {
+    if (state->player->shoot &&
+        (time->time - state->player->lastShot) > FIRE_RATE) {
         state->player->lastShot = time->time;
-        add_projectile(state, time->time);
+        shoot(state, time->time);
 
-        float dX = cos(state->player->rotation) * PLAYER_SHOOT_FORCE * time->deltaTime;
-        float dY = sin(state->player->rotation) * PLAYER_SHOOT_FORCE * time->deltaTime;
+        float dX =
+            cos(state->player->rotation) * PLAYER_SHOOT_FORCE * time->deltaTime;
+        float dY =
+            sin(state->player->rotation) * PLAYER_SHOOT_FORCE * time->deltaTime;
         Vector2 delta = create_vector(dX, dY);
         state->player->velocity = vector_sum(state->player->velocity, delta);
 
@@ -740,6 +766,7 @@ void detect_crash(State* state, Uint32 time) {
             state->player->crashed = 1;
             state->player->crashTime = time;
             on_crash(state->crashInfo, state->player, time);
+            Mix_PlayChannel(-1, state->sounds->explosion, 0);
         }
     }
 }
@@ -758,6 +785,7 @@ void detect_Shoot(State* state) {
             float dX = position.x - asteroid->position.x;
             float dY = position.y - asteroid->position.y;
             if ((dX * dX + dY * dY) <= (radius * radius)) {
+                Mix_PlayChannel(-1, state->sounds->hit, 0);
                 AsteroidSize size = asteroid->size;
                 Vector2 position = asteroid->position;
                 Uint32 seed = asteroid->seed;
@@ -769,7 +797,6 @@ void detect_Shoot(State* state) {
                 j--;
 
                 on_destroy(state, size, position, seed);
-
                 free(state->projectiles[i]);
                 for (int l = i; l < state->projectileSize - 1; l++) {
                     state->projectiles[l] = state->projectiles[l + 1];
@@ -941,4 +968,41 @@ void play_sound(Mix_Chunk* sound) {
     if (sound) {
         Mix_PlayChannel(-1, sound, 0);
     }
+}
+
+
+SoundManager* init_soundmanager(const char* explosion, const char* shoot, const char* hit) {
+    SoundManager* sounds = (SoundManager*)malloc(sizeof(SoundManager));
+    sounds->explosion = Mix_LoadWAV(explosion);
+    sounds->shoot= Mix_LoadWAV(shoot);
+    sounds->hit = Mix_LoadWAV(hit);
+
+    if (!sounds->explosion || !sounds->shoot || !sounds->hit) {
+        fprintf(stderr, "Failed to load sound effect!\n");
+    }
+
+    // Set the volume to half the miximum
+    Mix_Volume(-1, MIX_MAX_VOLUME / 4);
+
+    return sounds;
+}
+
+void free_soundmanager(SoundManager* sounds) {
+    if (!sounds) {
+        return;
+    }
+
+    if (sounds->explosion) {
+        Mix_FreeChunk(sounds->explosion);
+    }
+
+    if (sounds->shoot) {
+        Mix_FreeChunk(sounds->shoot);
+    }
+
+    if (sounds->hit) {
+        Mix_FreeChunk(sounds->hit);
+    }
+
+    free(sounds);
 }
