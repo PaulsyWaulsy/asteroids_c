@@ -208,6 +208,7 @@ typedef struct {
     int asteroidSize;
     int projectileCapacity;
     int projectileSize;
+    int level;
     Player* player;
     Asteroid** asteroids;
     Projectile** projectiles;
@@ -386,7 +387,8 @@ void update(Window* window, State* state, Time* gameTime) {
     detect_Shoot(state);
 
     if (state->asteroidSize <= 0) {
-        spawn_asteroids(state, INIT_NUM_ASTEROIDS, time(NULL));
+        state->level++;
+        spawn_asteroids(state, state->level * INIT_NUM_ASTEROIDS, time(NULL));
     }
 
     if (!state->player->crashed) {
@@ -485,6 +487,7 @@ Player* init_ship(const float x, const float y) {
 State* init_state(void) {
     State* state = (State*)malloc(sizeof(State));
     state->score = 0;
+    state->level = 1;
     state->player = init_ship(SCREEN_WIDTH / 2.0, SCREEN_HEIGHT / 2.0);
     state->asteroidSize = 0;
     state->asteroidCapacity = INIT_CAPACITY;
