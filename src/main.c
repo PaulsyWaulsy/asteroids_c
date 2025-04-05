@@ -25,6 +25,7 @@ const char* const EXPLOSION_PATH = "../sounds/explosion.wav";
 const char* const SHOOT_PATH = "../sounds/shoot.wav";
 const char* const HIT_PATH = "../sounds/hit.wav";
 const char* const ALIEN_PATH = "../sounds/alien.wav";
+const char* const RAN_PATH = "../sounds/random.wav";
 
 // Screen dimensions
 const int SCREEN_WIDTH = 1000;
@@ -45,7 +46,7 @@ const Vector2 INIT_SHIP_SHAPE[] = {
 const int NUM_ALIEN_POINTS = 13;
 const Vector2 INIT_ALIEN_SHAPE[] = {
     {-10, 30}, {10, 30}, {25, 25},  {15, 15},  {10, 15},  {10, 5},  {5, 0},
-    {-5, 0}, {-10, 5}, {-10, 15}, {-15, 15}, {-25, 25}, {-10, 30}};
+    {-5, 0},   {-10, 5}, {-10, 15}, {-15, 15}, {-25, 25}, {-10, 30}};
 
 const int NUM_FLAME_POINTS = 3;
 const Vector2 INIT_FLAME_SHAPE[] = {
@@ -116,6 +117,8 @@ const float DRIFT_FRACTION = 0.4f;
 const float ALIEN_SPEED = 150.0f;
 const Uint32 ALIEN_FIRE_RATE = 1000;
 const float PLAYER_SIZE = 15.0f;
+const float ALIEN_SIZE = 25.0f;
+const Uint32 PLAYER_SAFE_TIME = 1000;
 
 /*------------------------------------ENUMS-----------------------------------*/
 typedef enum {
@@ -207,6 +210,7 @@ typedef struct {
 } CrashInfo;
 
 typedef struct {
+    int hit;
     float rotation; // shoot angle
     Uint32 lastShot;
     Vector2 position;
@@ -218,6 +222,7 @@ typedef struct {
     Mix_Chunk* shoot;
     Mix_Chunk* hit;
     Mix_Chunk* alien;
+    Mix_Chunk* ran;
 } SoundManager;
 
 typedef struct {
@@ -283,7 +288,7 @@ void draw_score(SDL_Renderer* renderer, int score);
 void draw_digit(SDL_Renderer* renderer, Vector2 position, int num);
 void play_sound(Mix_Chunk* sound);
 SoundManager* init_soundmanager(const char* explosion, const char* shoot,
-                                const char* hit, const char* alien);
+                                const char* hit, const char* alien, const char* ran);
 void free_soundmanager(SoundManager* sounds);
 void player_shoot(State* state, Uint32 time);
 int* get_digits(int number, int* num_digits);
@@ -433,7 +438,7 @@ void update(Window* window, State* state, Time* gameTime) {
     update_asteroids(state->asteroids, state->asteroidSize, deltaTime);
     update_projectiles(state->projectiles, state->projectileSize, deltaTime);
 
-    if (state->level > 2) {
+    if (state->level >= 2 && !state->alien->hit) {
         update_alien(state, gameTime);
     }
     update_angle(state->alien, state->player->position);
@@ -444,6 +449,9 @@ void update(Window* window, State* state, Time* gameTime) {
     if (state->asteroidSize <= 0) {
         state->level++;
         spawn_asteroids(state, state->level * INIT_NUM_ASTEROIDS, time(NULL));
+        state->alien->hit = 0;
+        Mix_PlayChannel(-1, state->sounds->ran, 0);
+        state->alien->position = create_vector(0, 100);
     }
 
     if (!state->player->crashed) {
@@ -467,7 +475,9 @@ void render(Window* window, State* state, Uint32 time) {
     draw_projectiles(window->renderer, state->alienProjs, state->alienProjSize);
     draw_score(window->renderer, state->score);
 
-    draw_alien(window->renderer, state->alien);
+    if (!state->alien->hit) {
+        draw_alien(window->renderer, state->alien);
+    }
     if (!state->player->crashed) {
         draw_player(window->renderer, state->player, time);
     }
@@ -534,6 +544,7 @@ Player* init_ship(const float x, const float y) {
     player->moving = 0;
     player->shoot = 0;
     player->crashed = 0;
+    player->crashTime = 0;
     player->position = (Vector2){x, y};
     player->velocity = (Vector2){0, 0};
     player->rotation = VERTICLE;
@@ -610,7 +621,7 @@ State* init_state(void) {
     }
 
     state->sounds =
-        init_soundmanager(EXPLOSION_PATH, SHOOT_PATH, HIT_PATH, ALIEN_PATH);
+        init_soundmanager(EXPLOSION_PATH, SHOOT_PATH, HIT_PATH, ALIEN_PATH, RAN_PATH);
     if (!state->sounds) {
         fprintf(stderr, "Failed to initialize sound manager!\n");
         free(state->projectiles);
@@ -962,6 +973,27 @@ void detect_Shoot(State* state) {
             }
         }
     }
+
+    if (!state->alien->hit) {
+        for (int i = 0; i < state->projectileSize; i++) {
+            Vector2 position = state->projectiles[i]->position;
+            Alien* alien = state->alien;
+            float radius = ALIEN_SIZE;
+            float dX = position.x - alien->position.x;
+            float dY = position.y - alien->position.y;
+            if ((dX * dX + dY * dY) <= (radius * radius)) {
+                Mix_PlayChannel(-1, state->sounds->ran, 0);
+                alien->hit = 1;
+                free(state->projectiles[i]);
+                for (int l = i; l < state->projectileSize - 1; l++) {
+                    state->projectiles[l] = state->projectiles[l + 1];
+                }
+                state->projectileSize--; // Reduce the count
+                i--;
+                break;
+            }
+        }
+    }
 }
 
 void on_destroy(State* state, AsteroidSize size, Vector2 position,
@@ -1145,8 +1177,8 @@ void play_sound(Mix_Chunk* sound) {
 }
 
 SoundManager* init_soundmanager(const char* explosion, const char* shoot,
-                                const char* hit, const char* alien) {
-    if (!explosion || !shoot || !hit || !alien) {
+                                const char* hit, const char* alien, const char* ran) {
+    if (!explosion || !shoot || !hit || !alien || !ran) {
         fprintf(stderr, "Invalid sound file paths!\n");
         return NULL;
     }
@@ -1161,9 +1193,10 @@ SoundManager* init_soundmanager(const char* explosion, const char* shoot,
     sounds->shoot = Mix_LoadWAV(shoot);
     sounds->hit = Mix_LoadWAV(hit);
     sounds->alien = Mix_LoadWAV(alien);
+    sounds->ran = Mix_LoadWAV(ran);
 
     if (!sounds->explosion || !sounds->shoot || !sounds->hit ||
-        !sounds->alien) {
+        !sounds->alien || !sounds->ran) {
         fprintf(stderr, "Failed to load sound effects!\n");
         free_soundmanager(sounds);
         return NULL;
@@ -1196,14 +1229,19 @@ void free_soundmanager(SoundManager* sounds) {
         Mix_FreeChunk(sounds->alien);
     }
 
+    if (sounds->ran) {
+        Mix_FreeChunk(sounds->ran);
+    }
+
     free(sounds);
 }
 
 Alien* init_alien() {
     Alien* alien = (Alien*)malloc(sizeof(Alien));
+    alien->hit = 0;
     alien->rotation = 0;
     alien->lastShot = 0;
-    alien->position = create_vector((SCREEN_WIDTH / 2.0f), -50);
+    alien->position = create_vector(-20, 100);
     alien->velocity = create_vector(0, 0);
     return alien;
 }
@@ -1243,9 +1281,8 @@ void update_alien(State* state, Time* time) {
     }
 
     if ((time->time - alien->lastShot) >= ALIEN_FIRE_RATE &&
-        !state->player->crashed) {
+        !state->player->crashed && (time->time - state->player->crashTime) >= RESPAWN_TIME + PLAYER_SAFE_TIME) {
         alien_shoot(state, time->time);
-        Mix_PlayChannel(-1, state->sounds->alien, 0);
     }
     update_projectiles(state->alienProjs, state->alienProjSize,
                        time->deltaTime);
