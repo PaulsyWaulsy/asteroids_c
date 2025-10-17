@@ -5,8 +5,6 @@
 ![Language](https://img.shields.io/badge/language-C-blue)
 ![Framework](https://img.shields.io/badge/framework-SDL2-orange)
 ![Build](https://img.shields.io/badge/build-CMake-informational)
-![Status](https://img.shields.io/badge/status-active-success)
-![License](https://img.shields.io/badge/license-MIT-green)
 
 A faithful recreation of the **Asteroids** arcade game, written in **C** using **SDL2** and **CMake**.
 All graphics are rendered manually with `SDL_RenderDrawLine`, replicating the original vector-style visuals.
