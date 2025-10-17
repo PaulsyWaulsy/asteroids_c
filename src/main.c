@@ -288,7 +288,8 @@ void draw_score(SDL_Renderer* renderer, int score);
 void draw_digit(SDL_Renderer* renderer, Vector2 position, int num);
 void play_sound(Mix_Chunk* sound);
 SoundManager* init_soundmanager(const char* explosion, const char* shoot,
-                                const char* hit, const char* alien, const char* ran);
+                                const char* hit, const char* alien,
+                                const char* ran);
 void free_soundmanager(SoundManager* sounds);
 void player_shoot(State* state, Uint32 time);
 int* get_digits(int number, int* num_digits);
@@ -299,6 +300,7 @@ void update_alien(State* state, Time* time);
 void draw_alien(SDL_Renderer* renderer, Alien* alien);
 
 int main() {
+
     Time* gameTime = init_time();
     if (!gameTime) {
         fprintf(stderr, "Failed to initialize game time!\n");
@@ -620,8 +622,8 @@ State* init_state(void) {
         return NULL;
     }
 
-    state->sounds =
-        init_soundmanager(EXPLOSION_PATH, SHOOT_PATH, HIT_PATH, ALIEN_PATH, RAN_PATH);
+    state->sounds = init_soundmanager(EXPLOSION_PATH, SHOOT_PATH, HIT_PATH,
+                                      ALIEN_PATH, RAN_PATH);
     if (!state->sounds) {
         fprintf(stderr, "Failed to initialize sound manager!\n");
         free(state->projectiles);
@@ -1177,7 +1179,8 @@ void play_sound(Mix_Chunk* sound) {
 }
 
 SoundManager* init_soundmanager(const char* explosion, const char* shoot,
-                                const char* hit, const char* alien, const char* ran) {
+                                const char* hit, const char* alien,
+                                const char* ran) {
     if (!explosion || !shoot || !hit || !alien || !ran) {
         fprintf(stderr, "Invalid sound file paths!\n");
         return NULL;
@@ -1281,7 +1284,9 @@ void update_alien(State* state, Time* time) {
     }
 
     if ((time->time - alien->lastShot) >= ALIEN_FIRE_RATE &&
-        !state->player->crashed && (time->time - state->player->crashTime) >= RESPAWN_TIME + PLAYER_SAFE_TIME) {
+        !state->player->crashed &&
+        (time->time - state->player->crashTime) >=
+            RESPAWN_TIME + PLAYER_SAFE_TIME) {
         alien_shoot(state, time->time);
     }
     update_projectiles(state->alienProjs, state->alienProjSize,
@@ -1294,5 +1299,6 @@ void draw_alien(SDL_Renderer* renderer, Alien* alien) {
         Vector2 pos = vector_sum(alien->position, INIT_ALIEN_SHAPE[i]);
         ship[i] = pos;
     }
+
     draw_shape(renderer, ship, NUM_ALIEN_POINTS);
 }
