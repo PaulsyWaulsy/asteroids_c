@@ -12,7 +12,7 @@ A faithful recreation of the **Asteroids** arcade game, written in **C** using *
 All graphics are rendered manually with `SDL_RenderDrawLine`, replicating the original vector-style visuals.
 Audio feedback is included for shooting, collisions, and explosions.
 
-<img width="1096" height="824" alt="image" src="https://github.com/user-attachments/assets/3725ef4f-c5db-4653-a77b-7ad721df7a16" />
+<img width="1096" height="793" alt="image" src="https://github.com/user-attachments/assets/d01c38c6-661e-47c4-a0b7-760ec24de7d9" />
 
 ## Overview
 
